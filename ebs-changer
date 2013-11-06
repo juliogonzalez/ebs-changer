@@ -323,7 +323,7 @@ def main(argv=None):
 	      region = arg
   
 	if help is True:
-	  print "ebs_changer v0.9\n"
+	  print "ebs-changer v0.9\n"
 	  print "Utility to change EBS volume types and IOPS\n"
 	  print "The utility will stop the instance (if it was not stopped), and -in parallel-"
           print "snapshot the designated volumes, detach and destroy them, create new volumes"
