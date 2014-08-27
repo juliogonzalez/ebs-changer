@@ -1,50 +1,53 @@
 #!/usr/bin/python
-#
-# Change EBS volumes types and IOPS v0.9            #
-# (c) Julio Gonzalez Gil                            #
-# Under GNU Public License 3.0                      #
-# http://www.juliogonzalez.es                       #
-#
+"""
+Change EBS volumes types and IOPS v0.91
+(c) Julio Gonzalez Gil
+Under GNU Public License 3.0
+http://www.juliogonzalez.es
+"""
 
-import os
-import re
-import boto
-import time
-import threading
-import sys
-from time import sleep
 import boto.ec2
-import sys
 import getopt
-from colorama import Fore, Back, Style
+import re
+import sys
+import threading
+from colorama import Fore, Style
 from colorama import init
+from time import sleep
+
 init()
 
 CONST_REGION = "eu-west-1"
 
 
 def print_error(msg):
+    """ Print an error message (red) """
     print Style.BRIGHT + Fore.RED + "[ERROR] %s" % msg + Style.RESET_ALL
 
 
 def print_warning(msg):
+    """ Print a warning message (yellow) """
     print Style.BRIGHT + Fore.YELLOW + "[WARNING] %s" % msg + Style.RESET_ALL
 
 
 def print_ok(msg):
+    """ Print an OK message (green) """
     print Style.BRIGHT + Fore.GREEN + "[OK] %s" % msg + Style.RESET_ALL
 
 
 def print_info(msg):
+    """ Print an info message (cyan) """
     print Style.BRIGHT + Fore.CYAN + "[INFO] %s" % msg + Style.RESET_ALL
 
 
 def conn_ec2(region=CONST_REGION):
+    """ Connect to EC2 api on the given region """
     ec2_connection = boto.ec2.connect_to_region(region)
     return ec2_connection
 
 
 def get_instance(name=None, instanceid=None, region=CONST_REGION):
+    """ Return an EC2 instance object """
     conn = conn_ec2(region)
     reservations = conn.get_all_instances()
     for reservation in reservations:
@@ -59,16 +62,18 @@ def get_instance(name=None, instanceid=None, region=CONST_REGION):
     if instanceid is None:
         instancedata = name
     else:
-        instancedata = instnaceid
+        instancedata = instanceid
     print_error("Instance \"%s\" doesn't exist" % instancedata)
-    sys.exit(-2)
+    sys.exit(-253)
 
 
 def get_instance_state(instanceid, region=CONST_REGION):
-    return(get_instance(instanceid=instanceid, region=region).state)
+    """ Return an EC2 instance state """
+    return get_instance(instanceid=instanceid, region=region).state
 
 
 def getvolumes_from_instance(instanceid, devices, region=CONST_REGION):
+    """ Return all EBS volumes attached to an EC2 instance """
     conn = conn_ec2(region)
     expression = re.compile(devices)
     volumes = conn.get_all_volumes(
@@ -83,10 +88,11 @@ def getvolumes_from_instance(instanceid, devices, region=CONST_REGION):
     if len(rvolumes) > 0:
         return rvolumes
     print_error("Expression \"%s\" didn't match any volume" % devices)
-    sys.exit(-3)
+    sys.exit(-252)
 
 
 def check_iops_ratio(volumeid, iops, region):
+    """ Check if ratio iops/size for an EBS volume is valid """
     if int(iops) < 100 or int(iops) > 4000:
         print_error("Invalid IOPS value")
         return 1
@@ -96,13 +102,14 @@ def check_iops_ratio(volumeid, iops, region):
     if ratio <= 30:
         return 0
     else:
-        print_error(
-            "Size/IOPS ratio (%s) is not valid (must be better lower or equal than 30)" % ratio)
-        return 2
+        print_error("Size/IOPS ratio (%s) is not valid (must be better lower \
+          or equal than 30)" % ratio)
+        sys.exit(-251)
 
 
 def make_snapshot(volumeid, description, costgroup=None, environment=None,
                   region=CONST_REGION):
+    """ Create an EBS snapshot """
     conn = conn_ec2(region)
     volume = conn.get_all_volumes([volumeid])[0]
     snapshot = conn.create_snapshot(volumeid, "%s" % description)
@@ -122,10 +129,11 @@ def make_snapshot(volumeid, description, costgroup=None, environment=None,
         snapshot.id, {"Name": name, "CostGroup": costgroup,
                       "Environment": environment})
     print_ok("Snapshot %s finished" % snapshot.id)
-    return(snapshot.id)
+    return snapshot.id
 
 
 def delete_volume(volumeid, region=CONST_REGION):
+    """ Delete an EBS volume """
     conn = conn_ec2(region)
     volume = conn.get_all_volumes([volumeid])[0]
     print_info("Deleting volume %s..." % volumeid)
@@ -138,6 +146,7 @@ def delete_volume(volumeid, region=CONST_REGION):
 
 
 def detach_volume(volumeid, region=CONST_REGION):
+    """ Dettach an EBS volume """
     conn = conn_ec2(region)
     volume = conn.get_all_volumes([volumeid])[0]
     device = volume.attach_data.device
@@ -151,6 +160,7 @@ def detach_volume(volumeid, region=CONST_REGION):
 
 
 def attach_volume(volumeid, instanceid, device, region=CONST_REGION):
+    """ Attach an EBS volume to an EC2 instance """
     conn = conn_ec2(region)
     volume = conn.get_all_volumes([volumeid])[0]
     conn.attach_volume(volumeid, instanceid, device)
@@ -164,21 +174,22 @@ def attach_volume(volumeid, instanceid, device, region=CONST_REGION):
              (volumeid, instanceid, device))
 
 
-def create_volume_from_snapshot(snapshotid, zone, size, name=None,
-                                costgroup=None, environment=None, vtype="io",
-                                iops="100", region=CONST_REGION):
+def create_volume(snapshotid, zone, size, name=None,
+                  costgroup=None, environment=None, vtype="io",
+                  iops="100", region=CONST_REGION):
+    """ Create an EBS volume from a snapshot """
     conn = conn_ec2(region)
     if vtype == "io1":
         volume = conn.create_volume(size, zone, snapshotid, "io1", iops)
-        print_info("Creating volume %s (type io1, %sGB, %s PIOPS) at %s from snapshot %s" %
-                   (volume.id, size, iops, zone, snapshotid))
+        print_info("Creating volume %s (type io1, %sGB, %s PIOPS) at %s from"
+                   "snapshot %s" % (volume.id, size, iops, zone, snapshotid))
     if vtype == "standard" or vtype == "gp2":
         volume = conn.create_volume(size, zone, snapshotid, vtype)
-        print_info("Creating volume %s (type %s and %sGB) at %s from snapshot %s" %
-                   (volume.id, vtype, size, zone, snapshotid))
+        print_info("Creating volume %s (type %s and %sGB) at %s from "
+                   "snapshot %s" % (volume.id, vtype, size, zone, snapshotid))
     if volume.status == "error":
-        raise Exception(
-            "There was an error creating the volume from snapshot!")
+        print_error("There was an error creating the volume from snapshot!")
+        sys.exit(-250)
     while volume.status == "creating":
         sleep(15)
         print_info("%s: %s" % (volume.id, volume.status))
@@ -192,10 +203,11 @@ def create_volume_from_snapshot(snapshotid, zone, size, name=None,
     conn.create_tags(volume.id, {"Name": name, "CostGroup": costgroup,
                                  "Environment": environment})
     print_ok("Volume %s is created" % volume.id)
-    return(volume)
+    return volume
 
 
 def stop_instance_and_wait(instanceid, region):
+    """ Stop an EC2 instance (launch and waint until it's stopped """
     instancestate = get_instance_state(instanceid, region)
     if instancestate == "running" or instancestate == "stopping":
         conn = conn_ec2(region)
@@ -212,11 +224,13 @@ def stop_instance_and_wait(instanceid, region):
         print_ok("Instance %s was already stopped" % instanceid)
         return False
     else:
-        raise Exception(
-            "Can't stop an instance which is in %s state" % instancestate)
+        print_error("Can't stop an instance which is in %s state" %
+                    instancestate)
+        sys.exit(-249)
 
 
 def start_instance_and_wait(instanceid, region):
+    """ Start an EC2 instance (launch and waint until it's started """
     instancestate = get_instance_state(instanceid, region)
     if instancestate == "stopped":
         conn = conn_ec2(region)
@@ -233,12 +247,13 @@ def start_instance_and_wait(instanceid, region):
         print_ok("Instance %s was already started" % instanceid)
         return False
     else:
-        raise Exception(
-            "Can't start an instance which is in %s state" % instancestate)
+        print_error("Can't start an instance which is in %s state" %
+                    instancestate)
+        sys.exit(-248)
 
 
-class change_volume(threading.Thread):
-
+class ChangeVolume(threading.Thread):
+    """ Perform all needed task to change an EBS volume type """
     def __init__(self, region, instanceid, volume, vtype="io1", newiops="100"):
         threading.Thread.__init__(self)
         self.region = region
@@ -263,101 +278,113 @@ class change_volume(threading.Thread):
                                    self.region)
         detach_volume(self.volume.id, self.region)
         delete_volume(self.volume.id, self.region)
-        print_info("Old volume %s was deleted, but remember you still have its snapshot in case there're problems!" %
-                   self.volume.id)
+        print_info("Old volume %s was deleted, but remember you still have "
+                   "its snapshot in case there're problems!" % self.volume.id)
         if self.vtype == "io1":
-            nvolume = create_volume_from_snapshot(snapshotid, self.volume.zone,
-                                                  self.volume.size,
-                                                  self.volume.tags.get("Name"),
-                                                  self.volume.tags.get("CostGroup"),
-                                                  self.volume.tags.get("Environment"),
-                                                  self.vtype, self.newiops,
-                                                  region=self.region)
+            nvolume = create_volume(snapshotid, self.volume.zone,
+                                    self.volume.size,
+                                    self.volume.tags.get("Name"),
+                                    self.volume.tags.get("CostGroup"),
+                                    self.volume.tags.get("Environment"),
+                                    self.vtype, self.newiops,
+                                    region=self.region)
         if self.vtype == "standard" or self.vtype == "gp2":
-            nvolume = create_volume_from_snapshot(snapshotid,
-                                                  self.volume.zone,
-                                                  self.volume.size,
-                                                  self.volume.tags.get("Name"),
-                                                  self.volume.tags.get("CostGroup"),
-                                                  self.volume.tags.get("Environment"),
-                                                  self.vtype,
-                                                  region=self.region)
+            nvolume = create_volume(snapshotid,
+                                    self.volume.zone,
+                                    self.volume.size,
+                                    self.volume.tags.get("Name"),
+                                    self.volume.tags.get("CostGroup"),
+                                    self.volume.tags.get("Environment"),
+                                    self.vtype,
+                                    region=self.region)
         attach_volume(nvolume.id, self.instanceid,
                       self.volume.attach_data.device, self.region)
 
 
-def change_volumes_types_on_instance(instanceid, devices, vtype="io1",
-                                     newiops="100", region=CONST_REGION):
+def check_migration_logic(volumes, vtype, newiops, region):
+    """ Check migration logic (if there's something to migrate, IOPs...) """
+    samestd = 0
+    sameiops = 0
+    for volume in volumes:
+        if ((vtype == "standard" and volume.type == "standard") or
+                (vtype == "gp2" and volume.type == "gp2")):
+            print_warning("%s will migrate from %s type to %s type which "
+                          "doesn't make too much sense" % (volume.id,
+                                                           volume.type,
+                                                           vtype))
+            print_warning("Procedure will continue anyway")
+            samestd += 1
+        if vtype == "io1":
+            if volume.iops == int(newiops):
+                print_warning("%s will migrate from %s IOPS to %s IOPS "
+                              "which doesn't make too much "
+                              "sense" % (volume.id, volume.iops, newiops))
+                print_warning("Procedure will continue anyway")
+                sameiops += 1
+            validate_ratio = check_iops_ratio(volume.id, newiops, region)
+            if validate_ratio == 1:
+                print_error(
+                    "Invalid IOPS value. Stopping procedure before \
+                    changing any volume!")
+                sys.exit(-247)
+            if validate_ratio == 2:
+                print_error("Invalid IOPS rate for volume %s. Stopping "
+                            "procedure before changing any volume!" %
+                            volume.id)
+                sys.exit(-246)
+    if samestd == len(volumes):
+        print_error("You are trying to migrate all volumes from %s type "
+                    "to %s type" % (vtype, vtype))
+        sys.exit(-245)
+    if sameiops == len(volumes):
+        print_error("You are trying to migrate all volumes to the same IOPS "
+                    "value they already have")
+        sys.exit(-245)
+
+
+def migrate_volumes(instanceid, devices, vtype="io1", newiops="100",
+                    region=CONST_REGION):
+    """ Change type for all EBS volumes attached to an EC2 instance """
     volumes = getvolumes_from_instance(instanceid, devices, region)
     if len(volumes) > 0:
-        samestd = 0
-        sameiops = 0
-        for volume in volumes:
-            if (vtype == "standard" and volume.type == "standard") or (vtype == "gp2" and volume.type == "gp2"):
-                print_warning("%s will migrate from %s type to %s type which doesn't make too much sense" %
-                              (volume.id, volume.type, vtype))
-                print_warning("Procedure will continue anyway")
-                samestd += 1
-            if vtype == "io1":
-                if volume.iops == int(newiops):
-                    print_warning("%s will migrate from %s IOPS to %s IOPS which doesn't make too much sense" %
-                                  (volume.id, volume.iops, newiops))
-                    print_warning("Procedure will continue anyway")
-                    sameiops += 1
-                validate_ratio = check_iops_ratio(volume.id, newiops, region)
-                if validate_ratio == 1:
-                    print_error(
-                        "Invalid IOPS value. Stopping procedure before changing any volume!")
-                    return 1
-                if validate_ratio == 2:
-                    print_error(
-                        "Invalid IOPS rate for volume %s. Stopping procedure before changing any volume!" % volume.id)
-                    return 2
-        if (samestd == len(volumes)):
-            print_error(
-                "You are trying to migrate all volumes from %s type to %s type"
-                % (vtype, vtype))
-            return 3
-        if (sameiops == len(volumes)):
-            print_error(
-                "You are trying to migrate all volumes to the same IOPS value they already have")
-            return 4
-
-        was_stopped = stop_instance_and_wait(instanceid, region)
-
-        print_info("==== STARTING CHANGES ON PARALLEL ====")
-        for volume in volumes:
-            t = change_volume(region, instanceid, volume, vtype, newiops)
-            t.start()
-        # Main thread
-        mt = threading.currentThread()
-        for th in threading.enumerate():
-            # Prevent deadlock
-            if th is mt:
-                continue
-            th.join()
-        print_info("==== FINISHED PARALLEL CHANGES ====")
-
-        print_ok("All volumes were successfully changed")
-        if was_stopped is True:
-            start_instance_and_wait(instanceid, region)
-        else:
-            print_info("Not starting %s as it was stopped before the migration"
-                       % instanceid)
-        print_ok("All tasks finished!")
-        return 0
+        check_migration_logic(volumes, vtype, newiops, region)
     else:
         print_error("Instance %s doesn't have devices matching %s!" %
                     (instanceid, devices))
-        return 5
+        sys.exit(-244)
+    was_stopped = stop_instance_and_wait(instanceid, region)
+    print_info("==== STARTING CHANGES ON PARALLEL ====")
+    for volume in volumes:
+        task = ChangeVolume(region, instanceid, volume, vtype, newiops)
+        task.start()
+    # Main thread
+    main_thread = threading.currentThread()
+    for thread in threading.enumerate():
+        # Prevent deadlock
+        if thread is main_thread:
+            continue
+        thread.join()
+    print_info("==== FINISHED PARALLEL CHANGES ====")
+    print_ok("All volumes were successfully changed")
+    if was_stopped is True:
+        start_instance_and_wait(instanceid, region)
+    else:
+        print_info("Not starting %s as it was stopped before the migration"
+                   % instanceid)
+    print_ok("All tasks finished!")
+    return 0
 
 
 def print_help():
+    """ Print help for the script """
     print "ebs-changer v0.9\n"
     print "Utility to change EBS volume types and IOPS\n"
-    print "The utility will stop the instance (if it was not stopped), and -in parallel-"
-    print "snapshot the designated volumes, detach and destroy them, create new volumes"
-    print "from the snapshots and attach them and finally it  will start the instance (if"
+    print "The utility will stop the instance (if it was not stopped), and " \
+          "-in parallel-"
+    print "snapshot the designated volumes, detach and destroy them, create " \
+          "new volumes"
+    print "from the snapshots and attach them and finally it  will start " \
+          "the instance (if"
     print "it was started in the beginning).\n"
     print "Syntax:\n"
     print "    ebs-changer <arguments>\n"
@@ -371,75 +398,97 @@ def print_help():
     print "    \t\t\t\t\tUse regular expressions. For example /dev/sd[b-c]"
     print "    \t\t\t\t\tto catch /dev/sdb* and /dev/sdc*\n"
     print "    --region <region>\t\t\tAWS region where instance is located\n"
-    print "    --vtype <standard|gp2|io1,niops>\tNew volume type. If io1 is specified then"
+    print "    --vtype <standard|gp2|io1,niops>\tNew volume type. If io1 is " \
+          "specified then"
     print "    \t\t\t\t\tthe quantity of IOPs must be specified"
     print "    \t\t\t\t\tseparated by a colon\n"
 
 
+def validate_args(args):
+    """ Validate if all arguments ar correct """
+    if args['help'] is True:
+        print_help()
+        sys.exit(-255)
+    if args['instancename'] is None and args['instanceid'] is None:
+        raise Usage("Specify --instancename or --instanceid parameter")
+    if args['devices'] is None:
+        raise Usage("Specify --devices parameter")
+    if args['region'] is None:
+        raise Usage("Specify --region parameter")
+    if args['vtype'] is None:
+        raise Usage("Specify --vtype parameter")
+    else:
+        vtype_arr = args['vtype'].split(',')
+        if vtype_arr[0] == "io1":
+            if len(vtype_arr) == 1:
+                raise Usage("Volume type is io1, specify iops (see --help)")
+            else:
+                args['vtype'] = vtype_arr[0]
+                args['niops'] = vtype_arr[1]
+        elif (args['vtype'] != "standard") and (args['vtype'] != "gp2"):
+            raise Usage("Unknown value for --vtype parameter")
+    return True
+
+
+def parse_arguments(argv):
+    """ Parse and return the arguments as a dictionary """
+    try:
+        opts, _ = getopt.getopt(
+            argv[1:], "h", ["help", "instancename=", "instanceid=",
+                            "devices=", "vtype=", "region="])
+    except getopt.error, msg:
+        raise Usage(msg)
+    args = {
+        'help': False,
+        'instancename': None,
+        'instanceid': None,
+        'devices': None,
+        'vtype': None,
+        'niops': None,
+        'region': None,
+    }
+    for opt, arg in opts:
+        if opt == '--help':
+            args['help'] = True
+        elif opt == '--instancename':
+            args['instancename'] = arg
+        elif opt == '--instanceid':
+            args['instanceid'] = arg
+        elif opt == '--devices':
+            args['devices'] = arg
+        elif opt == '--vtype':
+            args['vtype'] = arg
+        elif opt == '--region':
+            args['region'] = arg
+    if validate_args(args):
+        return args
+
+
 # Adapted from http://www.artima.com/weblogs/viewpost.jsp?thread=4829
 class Usage(Exception):
+    """ Exception to show script usage """
     def __init__(self, msg):
         self.msg = msg
 
 
 def main(argv=None):
+    """ Main function """
     if argv is None:
         argv = sys.argv
     try:
-        try:
-            opts, args = getopt.getopt(
-                argv[1:], "h", ["help", "instancename=", "instanceid=",
-                                "devices=", "vtype=", "region="])
-        except getopt.error, msg:
-            raise Usage(msg)
-        # more code, unchanged
-        help = False
-        instancename = None
-        instanceid = None
-        devices = None
-        vtype = None
-        niops = None
-        region = None
-        for opt, arg in opts:
-            if opt == '--help':
-                help = True
-            elif opt == '--instancename':
-                instancename = arg
-            elif opt == '--instanceid':
-                instanceid = arg
-            elif opt == '--devices':
-                devices = arg
-            elif opt == '--vtype':
-                vtype = arg
-            elif opt == '--region':
-                region = arg
-        if help is True:
-            print_help()
-            return 0
-        if instancename is None and instanceid is None:
-            raise Usage("Please specify --instancename or --instanceid parameter")
-        if devices is None:
-            raise Usage("Please specify --devices parameter")
-        if region is None:
-            raise Usage("Please specify --region parameter")
-        if vtype is None:
-            raise Usage("Please specify --vtype parameter")
+        args = parse_arguments(argv)
+        if args['instanceid'] is None:
+            args['instanceid'] = get_instance(name=args['instancename'],
+                                              region=args['region']).id
         else:
-            vtype_arr = vtype.split(',')
-            if vtype_arr[0] == "io1":
-                if len(vtype_arr) == 1:
-                    raise Usage(
-                        "Missing number of iops in presence of --vtype=io1")
-                else:
-                    niops = vtype_arr[1]
-            elif (vtype_arr[0] != "standard") and (vtype_arr[0] != "gp2"):
-                raise Usage("Unknown value for --vtype parameter")
-        if instanceid is None:
-            instanceid = get_instance(name=instancename, region=region).id
-            print_info("Instance %s has ID %s" % (instancename, instanceid))
-        vret = change_volumes_types_on_instance(
-            instanceid, devices, vtype_arr[0], niops, region)
-        return vret
+            args['instanceid'] = get_instance(instanceid=args['instanceid'],
+                                              region=args['region']).id
+        if args['instancename'] is not None:
+            print_info("Instance %s has ID %s" % (args['instancename'],
+                                                  args['instanceid']))
+        if migrate_volumes(args['instanceid'], args['devices'], args['vtype'],
+                           args['niops'], args['region']) == 0:
+            return 0
     except Usage, err:
         print >>sys.stderr, err.msg
         print >>sys.stderr, "for help use --help"
