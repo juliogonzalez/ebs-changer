@@ -1,5 +1,7 @@
 # ebs-change
 
+**WARNING:** This software is now deprecated, as it is being developed as part of the suite [ebs-tools](https://github.com/juliogonzalez/ebs-tools)
+
 [![Build Status](http://jenkins-juliogonzalez.rhcloud.com/job/ebs-changer-build/badge/icon)](https://jenkins-juliogonzalez.rhcloud.com/job/ebs-changer-build/)
 
 Utility to change EBS volume types and IOPS
